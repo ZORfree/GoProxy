@@ -44,6 +44,7 @@ type Subscription struct {
 	ProxyCount  int       `json:"proxy_count"`
 	CreatedAt   time.Time `json:"created_at"`
 	Contributed bool      `json:"contributed"` // 是否为访客贡献
+	DefaultProtocol string `json:"default_protocol"`
 }
 
 // SourceStatus 代理源状态
@@ -670,7 +671,7 @@ func (s *Storage) MarkAsReplacementCandidate(addresses []string) error {
 		args[i] = addr
 	}
 	query := fmt.Sprintf(`UPDATE proxies SET status = 'candidate_replace' WHERE address IN (%s)`,
-		fmt.Sprintf("%s", placeholders))
+		strings.Join(placeholders, ","))
 	_, err := s.db.Exec(query, args...)
 	return err
 }

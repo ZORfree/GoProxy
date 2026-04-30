@@ -342,7 +342,7 @@ func parseClashProxy(proxy map[string]interface{}) (*ParsedNode, error) {
 }
 
 // parseBase64 解析 Base64 编码的纯文本
-func parseBase64(data []byte) ([]ParsedNode, error) {
+func parseBase64(data []byte, defaultProtocol string) ([]ParsedNode, error) {
 	// 尝试标准 Base64 解码
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
 	if err != nil {
@@ -356,7 +356,7 @@ func parseBase64(data []byte) ([]ParsedNode, error) {
 			}
 		}
 	}
-	return parsePlain(decoded)
+	return parsePlain(decoded, defaultProtocol)
 }
 
 // parsePlain 解析纯文本格式（每行一个 IP:PORT）
@@ -742,4 +742,44 @@ func parseShadowsocksLink(link string) (*ParsedNode, error) {
 		Port:   port,
 		Raw:    raw,
 	}, nil
+}
+
+// min returns the smaller of a or b.
+func min(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+func getStr(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		return fmt.Sprintf("%v", val)
+	}
+	return ""
+}
+
+func getStrDefault(m map[string]interface{}, key, def string) string {
+	if val, ok := m[key]; ok {
+		s := fmt.Sprintf("%v", val)
+		if s != "" && s != "<nil>" {
+			return s
+		}
+	}
+	return def
+}
+
+func getInt(m map[string]interface{}, key string) int {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case string:
+			i, _ := strconv.Atoi(v)
+			return i
+		}
+	}
+	return 0
 }

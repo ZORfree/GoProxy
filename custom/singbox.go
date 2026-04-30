@@ -507,38 +507,6 @@ func (s *SingBoxProcess) GetNodeCount() int {
 }
 
 // 辅助函数
-
-func getStr(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func getStrDefault(m map[string]interface{}, key, def string) string {
-	if s := getStr(m, key); s != "" {
-		return s
-	}
-	return def
-}
-
-func getInt(m map[string]interface{}, key string) int {
-	if v, ok := m[key]; ok {
-		switch val := v.(type) {
-		case int:
-			return val
-		case float64:
-			return int(val)
-		case string:
-			n, _ := strconv.Atoi(val)
-			return n
-		}
-	}
-	return 0
-}
-
 func getBool(m map[string]interface{}, key string) bool {
 	if v, ok := m[key]; ok {
 		switch val := v.(type) {
