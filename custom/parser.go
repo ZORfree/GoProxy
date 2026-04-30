@@ -73,37 +73,36 @@ func parseAutoDetect(data []byte) ([]ParsedNode, error) {
 		return parseProxyLinks(content)
 	}
 
-	// 3. 尝试 Base64 解码
-	decoded, err := tryBase64Decode(content)
-	if err != nil {
-		return nil, fmt.Errorf("无法识别订阅内容格式（非 YAML / 非协议链接 / 非 Base64）")
-	}
-
-	decodedStr := strings.TrimSpace(string(decoded))
-	if decodedStr == "" {
-		return nil, fmt.Errorf("Base64 解码后内容为空")
-	}
-	log.Printf("[custom] Base64 解码成功: %d bytes", len(decoded))
-
-	// 解码后是 YAML？
-	if looksLikeYAML(decodedStr) {
-		log.Println("[custom] Base64 解码后为 Clash YAML 格式")
-		return parseClash(decoded)
-	}
-
-	// 解码后是协议链接？
-	if looksLikeProxyLinks(decodedStr) {
-		log.Println("[custom] Base64 解码后为协议链接格式")
-		return parseProxyLinks(decodedStr)
-	}
-
-	// 解码后尝试纯文本
-	nodes, err := parsePlain(decoded)
+	// 3. 尝试纯文本 (IP:PORT 或 protocol://IP:PORT)
+	nodes, err := parsePlain(data)
 	if err == nil && len(nodes) > 0 {
+		log.Println("[custom] 检测到纯文本格式")
 		return nodes, nil
 	}
 
-	return nil, fmt.Errorf("无法识别订阅内容格式")
+	// 4. 尝试 Base64 解码并递归解析
+	decoded, err := tryBase64Decode(content)
+	if err == nil {
+		log.Printf("[custom] Base64 解码成功，尝试解析解码后内容")
+		decodedStr := strings.TrimSpace(string(decoded))
+		if decodedStr != "" {
+			// 如果解码后是 YAML
+			if looksLikeYAML(decodedStr) {
+				return parseClash(decoded)
+			}
+			// 如果解码后是协议链接
+			if looksLikeProxyLinks(decodedStr) {
+				return parseProxyLinks(decodedStr)
+			}
+			// 如果解码后是纯文本
+			nodes, err := parsePlain(decoded)
+			if err == nil && len(nodes) > 0 {
+				return nodes, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("无法识别订阅内容格式（非 YAML / 非协议链接 / 非纯文本 / 非有效 Base64）")
 }
 
 func safePreview(s string, n int) string {
