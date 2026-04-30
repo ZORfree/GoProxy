@@ -61,8 +61,9 @@ func (s *SOCKS5Server) Start() error {
 func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
-	// SOCKS5 握手
-	if err := s.socks5Handshake(clientConn); err != nil {
+	// SOCKS5 握手（返回国家过滤列表）
+	countryFilter, err := s.socks5Handshake(clientConn)
+	if err != nil {
 		log.Printf("[socks5] handshake failed: %v", err)
 		return
 	}
@@ -80,7 +81,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	maxRetries := s.cfg.MaxRetry + 2 // 增加重试次数以应对质量差的代理
 	
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		p, err := s.selectSOCKS5Proxy(tried)
+		p, err := s.selectSOCKS5Proxy(tried, countryFilter)
 		if err != nil {
 			log.Printf("[socks5] no available socks5 upstream proxy: %v", err)
 			s.sendSOCKS5Reply(clientConn, 0x01) // General failure
@@ -121,8 +122,8 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	log.Printf("[socks5] all proxies failed for %s", target)
 }
 
-// selectSOCKS5Proxy 根据使用模式选择 SOCKS5 上游代理
-func (s *SOCKS5Server) selectSOCKS5Proxy(tried []string) (*storage.Proxy, error) {
+// selectSOCKS5Proxy 根据使用模式选择 SOCKS5 上游代理（支持国家过滤）
+func (s *SOCKS5Server) selectSOCKS5Proxy(tried []string, countryFilter []string) (*storage.Proxy, error) {
 	cfg := config.Get()
 	sourceFilter := sourceFilterFromMode(cfg.CustomProxyMode)
 
@@ -135,45 +136,45 @@ func (s *SOCKS5Server) selectSOCKS5Proxy(tried []string) (*storage.Proxy, error)
 		var p *storage.Proxy
 		var err error
 		if s.mode == "lowest-latency" {
-			p, err = s.storage.GetLowestLatencyByProtocolExcludeFiltered("socks5", tried, preferSource)
+			p, err = s.storage.GetLowestLatencyByProtocolExcludeFilteredByCountry("socks5", tried, preferSource, countryFilter)
 		} else {
-			p, err = s.storage.GetRandomByProtocolExcludeFiltered("socks5", tried, preferSource)
+			p, err = s.storage.GetRandomByProtocolExcludeFilteredByCountry("socks5", tried, preferSource, countryFilter)
 		}
 		if err == nil {
 			return p, nil
 		}
 		// fallback
 		if s.mode == "lowest-latency" {
-			return s.storage.GetLowestLatencyByProtocolExcludeFiltered("socks5", tried, "")
+			return s.storage.GetLowestLatencyByProtocolExcludeFilteredByCountry("socks5", tried, "", countryFilter)
 		}
-		return s.storage.GetRandomByProtocolExcludeFiltered("socks5", tried, "")
+		return s.storage.GetRandomByProtocolExcludeFilteredByCountry("socks5", tried, "", countryFilter)
 	}
 
 	if s.mode == "lowest-latency" {
-		return s.storage.GetLowestLatencyByProtocolExcludeFiltered("socks5", tried, sourceFilter)
+		return s.storage.GetLowestLatencyByProtocolExcludeFilteredByCountry("socks5", tried, sourceFilter, countryFilter)
 	}
-	return s.storage.GetRandomByProtocolExcludeFiltered("socks5", tried, sourceFilter)
+	return s.storage.GetRandomByProtocolExcludeFilteredByCountry("socks5", tried, sourceFilter, countryFilter)
 }
 
-// socks5Handshake 处理 SOCKS5 握手
-func (s *SOCKS5Server) socks5Handshake(conn net.Conn) error {
+// socks5Handshake 处理 SOCKS5 握手，返回国家过滤列表
+func (s *SOCKS5Server) socks5Handshake(conn net.Conn) ([]string, error) {
 	buf := make([]byte, 257)
 
 	// 读取客户端问候: [VER(1), NMETHODS(1), METHODS(1-255)]
 	n, err := io.ReadAtLeast(conn, buf, 2)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	version := buf[0]
 	if version != 0x05 {
-		return fmt.Errorf("unsupported SOCKS version: %d", version)
+		return nil, fmt.Errorf("unsupported SOCKS version: %d", version)
 	}
 
 	nmethods := int(buf[1])
 	if n < 2+nmethods {
 		if _, err := io.ReadFull(conn, buf[n:2+nmethods]); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -203,41 +204,45 @@ func (s *SOCKS5Server) socks5Handshake(conn net.Conn) error {
 
 	// 发送方法选择: [VER(1), METHOD(1)]
 	if _, err := conn.Write([]byte{0x05, selectedMethod}); err != nil {
-		return err
+		return nil, err
 	}
 
 	if selectedMethod == 0xFF {
-		return fmt.Errorf("no acceptable authentication method")
+		return nil, fmt.Errorf("no acceptable authentication method")
 	}
 
 	// 如果需要认证，进行用户名/密码认证
+	var countryFilter []string
 	if selectedMethod == 0x02 {
-		if err := s.socks5Auth(conn); err != nil {
-			return err
+		countries, err := s.socks5Auth(conn)
+		if err != nil {
+			return nil, err
 		}
+		countryFilter = countries
 	}
 
-	return nil
+	return countryFilter, nil
 }
 
-// socks5Auth 处理 SOCKS5 用户名/密码认证
-func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
+// socks5Auth 处理 SOCKS5 用户名/密码认证（仅验证用户名，密码用作国家过滤）
+// 返回：国家过滤列表
+func (s *SOCKS5Server) socks5Auth(conn net.Conn) ([]string, error) {
 	buf := make([]byte, 513)
 
 	// 读取认证请求: [VER(1), ULEN(1), UNAME(1-255), PLEN(1), PASSWD(1-255)]
 	n, err := io.ReadAtLeast(conn, buf, 2)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if buf[0] != 0x01 {
-		return fmt.Errorf("unsupported auth version: %d", buf[0])
+		return nil, fmt.Errorf("unsupported auth version: %d", buf[0])
 	}
 
 	ulen := int(buf[1])
 	if n < 2+ulen {
 		if _, err := io.ReadFull(conn, buf[n:2+ulen]); err != nil {
-			return err
+			return nil, err
 		}
 		n = 2 + ulen
 	}
@@ -247,7 +252,7 @@ func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
 	// 读取密码长度和密码
 	if n < 2+ulen+1 {
 		if _, err := io.ReadFull(conn, buf[n:2+ulen+1]); err != nil {
-			return err
+			return nil, err
 		}
 		n = 2 + ulen + 1
 	}
@@ -255,25 +260,27 @@ func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
 	plen := int(buf[2+ulen])
 	if n < 2+ulen+1+plen {
 		if _, err := io.ReadFull(conn, buf[n:2+ulen+1+plen]); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	password := string(buf[2+ulen+1 : 2+ulen+1+plen])
 
-	// 验证用户名和密码
-	if username != s.cfg.ProxyAuthUsername || password != s.cfg.ProxyAuthPassword {
+	// 仅验证用户名
+	if username != s.cfg.ProxyAuthUsername {
 		// 认证失败: [VER(1), STATUS(1)]
 		conn.Write([]byte{0x01, 0x01})
-		return fmt.Errorf("authentication failed")
+		return nil, fmt.Errorf("authentication failed")
 	}
 
 	// 认证成功: [VER(1), STATUS(1)]
 	if _, err := conn.Write([]byte{0x01, 0x00}); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	// 密码字段用作国家过滤码（以 ; 分隔，如 "US;JP"）
+	countries := parseCountryFilter(password)
+	return countries, nil
 }
 
 // readSOCKS5Request 读取 SOCKS5 请求

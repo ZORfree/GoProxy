@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
@@ -48,58 +47,87 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var countryFilter []string
+
 	// 认证检查（如果启用）
 	if s.cfg.ProxyAuthEnabled {
-		if !s.checkAuth(r) {
+		ok, countries := s.checkAuth(r)
+		if !ok {
 			w.Header().Set("Proxy-Authenticate", `Basic realm="GoProxy"`)
 			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
 			return
 		}
+		countryFilter = countries
 	}
 	
 	if r.Method == http.MethodConnect {
-		s.handleTunnel(w, r)
+		s.handleTunnel(w, r, countryFilter)
 	} else {
-		s.handleHTTP(w, r)
+		s.handleHTTP(w, r, countryFilter)
 	}
 }
 
-// checkAuth 验证代理 Basic Auth
-func (s *Server) checkAuth(r *http.Request) bool {
+// checkAuth 验证代理 Basic Auth（仅验证用户名，密码用作国家过滤）
+// 返回：认证是否通过、国家过滤列表
+func (s *Server) checkAuth(r *http.Request) (bool, []string) {
 	auth := r.Header.Get("Proxy-Authorization")
 	if auth == "" {
-		return false
+		return false, nil
 	}
 	
 	// 解析 Basic Auth
 	const prefix = "Basic "
 	if !strings.HasPrefix(auth, prefix) {
-		return false
+		return false, nil
 	}
 	
 	decoded, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
 	if err != nil {
-		return false
+		return false, nil
 	}
 	
 	credentials := strings.SplitN(string(decoded), ":", 2)
 	if len(credentials) != 2 {
-		return false
+		return false, nil
 	}
 	
 	username := credentials[0]
 	password := credentials[1]
 	
-	// 验证用户名和密码
+	// 仅验证用户名（常量时间比较）
 	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(s.cfg.ProxyAuthUsername)) == 1
-	passwordHash := fmt.Sprintf("%x", sha256.Sum256([]byte(password)))
-	passwordMatch := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(s.cfg.ProxyAuthPasswordHash)) == 1
+	if !usernameMatch {
+		return false, nil
+	}
 	
-	return usernameMatch && passwordMatch
+	// 密码字段用作国家过滤码（以 ; 分隔，如 "US;JP"）
+	countries := parseCountryFilter(password)
+	return true, countries
 }
 
-// selectProxy 根据使用模式和选择策略获取代理
-func (s *Server) selectProxy(tried []string, lowestLatency bool) (*storage.Proxy, error) {
+// parseCountryFilter 解析密码字段中的国家过滤码
+// 输入: "US;JP" → 输出: ["US", "JP"]
+// 输入: "" → 输出: nil (不过滤)
+func parseCountryFilter(password string) []string {
+	if password == "" {
+		return nil
+	}
+	parts := strings.Split(password, ";")
+	var countries []string
+	for _, p := range parts {
+		c := strings.TrimSpace(strings.ToUpper(p))
+		if c != "" {
+			countries = append(countries, c)
+		}
+	}
+	if len(countries) == 0 {
+		return nil
+	}
+	return countries
+}
+
+// selectProxy 根据使用模式和选择策略获取代理（支持国家过滤）
+func (s *Server) selectProxy(tried []string, lowestLatency bool, countryFilter []string) (*storage.Proxy, error) {
 	cfg := config.Get()
 	sourceFilter := sourceFilterFromMode(cfg.CustomProxyMode)
 
@@ -112,24 +140,24 @@ func (s *Server) selectProxy(tried []string, lowestLatency bool) (*storage.Proxy
 		var p *storage.Proxy
 		var err error
 		if lowestLatency {
-			p, err = s.storage.GetLowestLatencyExcludeFiltered(tried, preferSource)
+			p, err = s.storage.GetLowestLatencyExcludeFilteredByCountry(tried, preferSource, countryFilter)
 		} else {
-			p, err = s.storage.GetRandomExcludeFiltered(tried, preferSource)
+			p, err = s.storage.GetRandomExcludeFilteredByCountry(tried, preferSource, countryFilter)
 		}
 		if err == nil {
 			return p, nil
 		}
 		// fallback 到全部
 		if lowestLatency {
-			return s.storage.GetLowestLatencyExcludeFiltered(tried, "")
+			return s.storage.GetLowestLatencyExcludeFilteredByCountry(tried, "", countryFilter)
 		}
-		return s.storage.GetRandomExcludeFiltered(tried, "")
+		return s.storage.GetRandomExcludeFilteredByCountry(tried, "", countryFilter)
 	}
 
 	if lowestLatency {
-		return s.storage.GetLowestLatencyExcludeFiltered(tried, sourceFilter)
+		return s.storage.GetLowestLatencyExcludeFilteredByCountry(tried, sourceFilter, countryFilter)
 	}
-	return s.storage.GetRandomExcludeFiltered(tried, sourceFilter)
+	return s.storage.GetRandomExcludeFilteredByCountry(tried, sourceFilter, countryFilter)
 }
 
 // removeOrDisableProxy 根据代理来源决定删除或禁用
@@ -154,10 +182,10 @@ func sourceFilterFromMode(mode string) string {
 }
 
 // handleHTTP 处理普通 HTTP 请求（带自动重试）
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, countryFilter []string) {
 	var tried []string
 	for attempt := 0; attempt <= s.cfg.MaxRetry; attempt++ {
-		p, err := s.selectProxy(tried, s.mode == "lowest-latency")
+		p, err := s.selectProxy(tried, s.mode == "lowest-latency", countryFilter)
 		if err != nil {
 			http.Error(w, "no available proxy", http.StatusServiceUnavailable)
 			return
@@ -209,10 +237,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleTunnel 处理 HTTPS CONNECT 隧道（带自动重试）
-func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request, countryFilter []string) {
 	var tried []string
 	for attempt := 0; attempt <= s.cfg.MaxRetry; attempt++ {
-		p, err := s.selectProxy(tried, s.mode == "lowest-latency")
+		p, err := s.selectProxy(tried, s.mode == "lowest-latency", countryFilter)
 		if err != nil {
 			http.Error(w, "no available proxy", http.StatusServiceUnavailable)
 			return

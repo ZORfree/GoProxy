@@ -349,6 +349,13 @@ func (s *Storage) GetAll() ([]Proxy, error) {
 // GetAllFiltered 获取可用代理（可按来源过滤）
 // sourceFilter: "" = 全部, "free" = 仅免费, "custom" = 仅订阅
 func (s *Storage) GetAllFiltered(sourceFilter string) ([]Proxy, error) {
+	return s.GetAllFilteredByCountry(sourceFilter, nil)
+}
+
+// GetAllFilteredByCountry 获取可用代理（可按来源和国家过滤）
+// sourceFilter: "" = 全部, "free" = 仅免费, "custom" = 仅订阅
+// countries: 国家代码白名单，如 ["US", "JP"]，nil 或空表示不过滤
+func (s *Storage) GetAllFilteredByCountry(sourceFilter string, countries []string) ([]Proxy, error) {
 	query := `SELECT ` + proxyColumns + `
 		 FROM proxies
 		 WHERE status IN ('active', 'degraded') AND fail_count < 3`
@@ -356,6 +363,15 @@ func (s *Storage) GetAllFiltered(sourceFilter string) ([]Proxy, error) {
 	if sourceFilter != "" {
 		query += ` AND source = ?`
 		args = append(args, sourceFilter)
+	}
+	// 按国家过滤：exit_location 格式为 "CC City"，取前两位匹配国家代码
+	if len(countries) > 0 {
+		conditions := make([]string, 0, len(countries)*2)
+		for _, code := range countries {
+			conditions = append(conditions, "exit_location = ?", "exit_location LIKE ?")
+			args = append(args, code, code+" %")
+		}
+		query += ` AND (` + strings.Join(conditions, " OR ") + `)`
 	}
 	query += ` ORDER BY latency ASC`
 
@@ -383,7 +399,12 @@ func (s *Storage) GetRandomExclude(excludes []string) (*Proxy, error) {
 
 // GetRandomExcludeFiltered 排除指定地址随机取一个（可按来源过滤）
 func (s *Storage) GetRandomExcludeFiltered(excludes []string, sourceFilter string) (*Proxy, error) {
-	proxies, err := s.GetAllFiltered(sourceFilter)
+	return s.GetRandomExcludeFilteredByCountry(excludes, sourceFilter, nil)
+}
+
+// GetRandomExcludeFilteredByCountry 排除指定地址随机取一个（可按来源和国家过滤）
+func (s *Storage) GetRandomExcludeFilteredByCountry(excludes []string, sourceFilter string, countries []string) (*Proxy, error) {
+	proxies, err := s.GetAllFilteredByCountry(sourceFilter, countries)
 	if err != nil {
 		return nil, err
 	}
@@ -401,8 +422,8 @@ func (s *Storage) GetRandomExcludeFiltered(excludes []string, sourceFilter strin
 	}
 
 	if len(available) == 0 {
-		if sourceFilter != "" {
-			return nil, fmt.Errorf("no available %s proxy", sourceFilter)
+		if sourceFilter != "" || len(countries) > 0 {
+			return nil, fmt.Errorf("no available proxy (source=%s countries=%v)", sourceFilter, countries)
 		}
 		return s.GetRandom()
 	}
@@ -418,7 +439,12 @@ func (s *Storage) GetLowestLatencyExclude(excludes []string) (*Proxy, error) {
 
 // GetLowestLatencyExcludeFiltered 排除指定地址后获取延迟最低的代理（可按来源过滤）
 func (s *Storage) GetLowestLatencyExcludeFiltered(excludes []string, sourceFilter string) (*Proxy, error) {
-	proxies, err := s.GetAllFiltered(sourceFilter)
+	return s.GetLowestLatencyExcludeFilteredByCountry(excludes, sourceFilter, nil)
+}
+
+// GetLowestLatencyExcludeFilteredByCountry 排除指定地址后获取延迟最低的代理（可按来源和国家过滤）
+func (s *Storage) GetLowestLatencyExcludeFilteredByCountry(excludes []string, sourceFilter string, countries []string) (*Proxy, error) {
+	proxies, err := s.GetAllFilteredByCountry(sourceFilter, countries)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +471,12 @@ func (s *Storage) GetRandomByProtocolExclude(protocol string, excludes []string)
 
 // GetRandomByProtocolExcludeFiltered 按协议获取随机代理（可按来源过滤）
 func (s *Storage) GetRandomByProtocolExcludeFiltered(protocol string, excludes []string, sourceFilter string) (*Proxy, error) {
-	proxies, err := s.GetAllFiltered(sourceFilter)
+	return s.GetRandomByProtocolExcludeFilteredByCountry(protocol, excludes, sourceFilter, nil)
+}
+
+// GetRandomByProtocolExcludeFilteredByCountry 按协议获取随机代理（可按来源和国家过滤）
+func (s *Storage) GetRandomByProtocolExcludeFilteredByCountry(protocol string, excludes []string, sourceFilter string, countries []string) (*Proxy, error) {
+	proxies, err := s.GetAllFilteredByCountry(sourceFilter, countries)
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +508,12 @@ func (s *Storage) GetLowestLatencyByProtocolExclude(protocol string, excludes []
 
 // GetLowestLatencyByProtocolExcludeFiltered 按协议获取最低延迟代理（可按来源过滤）
 func (s *Storage) GetLowestLatencyByProtocolExcludeFiltered(protocol string, excludes []string, sourceFilter string) (*Proxy, error) {
-	proxies, err := s.GetAllFiltered(sourceFilter)
+	return s.GetLowestLatencyByProtocolExcludeFilteredByCountry(protocol, excludes, sourceFilter, nil)
+}
+
+// GetLowestLatencyByProtocolExcludeFilteredByCountry 按协议获取最低延迟代理（可按来源和国家过滤）
+func (s *Storage) GetLowestLatencyByProtocolExcludeFilteredByCountry(protocol string, excludes []string, sourceFilter string, countries []string) (*Proxy, error) {
+	proxies, err := s.GetAllFilteredByCountry(sourceFilter, countries)
 	if err != nil {
 		return nil, err
 	}

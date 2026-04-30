@@ -115,18 +115,24 @@ curl --socks5 localhost:7780 https://httpbin.org/ip
 export ALL_PROXY=socks5://localhost:7779
 ```
 
-### 带认证使用
+### 带认证与国家过滤
+
+GoProxy 采用 **"用户名认证 + 密码过滤"** 的创新机制：
+- **用户名 (User)**：用于身份校验，必须与配置一致。
+- **密码 (Pass)**：不再用于校验，而是作为 **出口国家过滤器**（分号 `;` 分隔的国家代码，如 `US;JP`）。
 
 ```bash
-# HTTP
-curl -x http://user:pass@your-server:7777 https://httpbin.org/ip
+# 仅认证，不限国家（密码留空）
+curl -x http://user:@your-server:7777 https://httpbin.org/ip
 
-# SOCKS5
-curl --socks5 user:pass@your-server:7779 https://httpbin.org/ip
+# 仅返回美国 (US) 代理
+curl -x http://user:US@your-server:7777 https://httpbin.org/ip
 
-# 环境变量
-export http_proxy=http://user:pass@your-server:7777
-export ALL_PROXY=socks5://user:pass@your-server:7779
+# 仅返回日本 (JP) 或新加坡 (SG) 代理
+curl -x http://user:JP;SG@your-server:7777 https://httpbin.org/ip
+
+# SOCKS5 同理
+curl --socks5 user:KR;HK@your-server:7779 https://httpbin.org/ip
 ```
 
 ### 编程语言示例
@@ -226,7 +232,7 @@ docker compose up -d
 | `WEBUI_PASSWORD` | `goproxy` | 是 | WebUI 登录密码，生产环境务必修改 |
 | `PROXY_AUTH_ENABLED` | `false` | 否 | 代理认证开关，公网部署建议启用 |
 | `PROXY_AUTH_USERNAME` | `proxy` | 否 | 代理认证用户名 |
-| `PROXY_AUTH_PASSWORD` | 空 | 否 | 代理认证密码，启用认证时必填 |
+| `PROXY_AUTH_PASSWORD` | 空 | 否 | 已废弃，客户端请求时的密码将用作国家过滤 |
 | `BLOCKED_COUNTRIES` | `CN` | 否 | 屏蔽国家代码（逗号分隔，留空不屏蔽） |
 | `ALLOWED_COUNTRIES` | 空 | 否 | 允许国家白名单（非空时优先于黑名单） |
 | `CUSTOM_PROXY_MODE` | `mixed` | 否 | 代理模式：mixed / custom_only / free_only |
