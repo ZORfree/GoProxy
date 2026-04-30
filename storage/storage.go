@@ -238,6 +238,11 @@ func (s *Storage) initSchema() error {
 	if hasLastSuccess == 0 {
 		s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN last_success DATETIME`)
 	}
+	var hasDefaultProtocol int
+	s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name='default_protocol'`).Scan(&hasDefaultProtocol)
+	if hasDefaultProtocol == 0 {
+		s.db.Exec(`ALTER TABLE subscriptions ADD COLUMN default_protocol TEXT NOT NULL DEFAULT 'http'`)
+	}
 
 	return nil
 }
@@ -917,15 +922,18 @@ func (s *Storage) GetByProtocol(protocol string) ([]Proxy, error) {
 
 // ========== 订阅代理相关方法 ==========
 
-// AddProxyWithSource 新增代理并指定来源和订阅ID
-func (s *Storage) AddProxyWithSource(address, protocol, source string, subscriptionID ...int64) error {
+// AddProxyWithSource 新增代理并指定来源、初始状态和订阅ID
+func (s *Storage) AddProxyWithSource(address, protocol, source, status string, subscriptionID ...int64) error {
 	subID := int64(0)
 	if len(subscriptionID) > 0 {
 		subID = subscriptionID[0]
 	}
+	if status == "" {
+		status = "active"
+	}
 	result, err := s.db.Exec(
-		`INSERT OR IGNORE INTO proxies (address, protocol, source, subscription_id) VALUES (?, ?, ?, ?)`,
-		address, protocol, source, subID,
+		`INSERT OR IGNORE INTO proxies (address, protocol, source, status, subscription_id) VALUES (?, ?, ?, ?, ?)`,
+		address, protocol, source, status, subID,
 	)
 	if err != nil {
 		log.Printf("[storage] AddProxyWithSource %s error: %v", address, err)
@@ -933,7 +941,7 @@ func (s *Storage) AddProxyWithSource(address, protocol, source string, subscript
 	}
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
-		// 已存在，更新 source 和 subscription_id
+		// 已存在，更新 source 和 subscription_id (不覆盖已有 status)
 		_, err = s.db.Exec(`UPDATE proxies SET source = ?, subscription_id = ? WHERE address = ?`, source, subID, address)
 	}
 	return err
@@ -1030,7 +1038,7 @@ func (s *Storage) DeleteCustomProxiesNotIn(addresses []string) (int64, error) {
 // ========== 订阅 CRUD ==========
 
 // AddSubscription 添加订阅（自动去重：相同 URL 或 file_path 不重复添加）
-func (s *Storage) AddSubscription(name, url, filePath, format string, refreshMin int) (int64, error) {
+func (s *Storage) AddSubscription(name, url, filePath, format string, refreshMin int, defaultProtocol string) (int64, error) {
 	// 去重检查
 	if url != "" {
 		var existID int64
@@ -1048,8 +1056,8 @@ func (s *Storage) AddSubscription(name, url, filePath, format string, refreshMin
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO subscriptions (name, url, file_path, format, refresh_min) VALUES (?, ?, ?, ?, ?)`,
-		name, url, filePath, format, refreshMin,
+		`INSERT INTO subscriptions (name, url, file_path, format, refresh_min, default_protocol) VALUES (?, ?, ?, ?, ?, ?)`,
+		name, url, filePath, format, refreshMin, defaultProtocol,
 	)
 	if err != nil {
 		return 0, err
@@ -1071,7 +1079,7 @@ func (s *Storage) CountBySubscriptionID(subID int64) (active int, disabled int) 
 }
 
 // AddContributedSubscription 添加访客贡献的订阅
-func (s *Storage) AddContributedSubscription(name, url string, refreshMin int) (int64, error) {
+func (s *Storage) AddContributedSubscription(name, url string, refreshMin int, defaultProtocol string) (int64, error) {
 	if url == "" {
 		return 0, fmt.Errorf("URL 不能为空")
 	}
@@ -1083,8 +1091,8 @@ func (s *Storage) AddContributedSubscription(name, url string, refreshMin int) (
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO subscriptions (name, url, format, refresh_min, contributed) VALUES (?, ?, 'auto', ?, 1)`,
-		name, url, refreshMin,
+		`INSERT INTO subscriptions (name, url, format, refresh_min, contributed, default_protocol) VALUES (?, ?, 'auto', ?, 1, ?)`,
+		name, url, refreshMin, defaultProtocol,
 	)
 	if err != nil {
 		return 0, err
@@ -1200,14 +1208,14 @@ func (s *Storage) ToggleSubscription(id int64) error {
 
 // scanSubscription 扫描订阅行数据
 // subColumns 订阅表查询列
-const subColumns = `id, name, url, file_path, format, refresh_min, last_fetch, last_success, status, proxy_count, created_at, contributed`
+const subColumns = `id, name, url, file_path, format, refresh_min, last_fetch, last_success, status, proxy_count, created_at, contributed, default_protocol`
 
 func scanSubscription(rows *sql.Rows) (*Subscription, error) {
 	sub := &Subscription{}
 	var lastFetch, lastSuccess sql.NullTime
 	var contributed int
 	if err := rows.Scan(&sub.ID, &sub.Name, &sub.URL, &sub.FilePath, &sub.Format,
-		&sub.RefreshMin, &lastFetch, &lastSuccess, &sub.Status, &sub.ProxyCount, &sub.CreatedAt, &contributed); err != nil {
+		&sub.RefreshMin, &lastFetch, &lastSuccess, &sub.Status, &sub.ProxyCount, &sub.CreatedAt, &contributed, &sub.DefaultProtocol); err != nil {
 		return nil, err
 	}
 	if lastFetch.Valid {

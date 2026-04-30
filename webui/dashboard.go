@@ -502,6 +502,14 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
           <input type="number" id="sub-refresh" value="60" min="10" max="1440" step="10">
           <div class="form-help" data-i18n="sub.refresh_min_help">仅 URL 模式有效</div>
         </div>
+        <div class="form-group">
+          <label data-i18n="sub.default_protocol">纯文本默认协议</label>
+          <select id="sub-default-protocol" style="padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:12px;outline:none">
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+          <div class="form-help" data-i18n="sub.default_protocol_help">仅当订阅内容为纯 IP:PORT 时生效</div>
+        </div>
       </div>
     </div>
     <div class="modal-actions">
@@ -547,6 +555,14 @@ tr:hover{background:var(--gray-2);box-shadow:inset 0 0 20px rgba(0,255,65,0.05)}
             <div id="contribute-file-label" style="color:var(--fg-dim);font-size:11px" data-i18n="sub.file_drop">点击选择或拖拽文件到此处</div>
           </div>
           <input type="file" id="contribute-file-input" accept=".yaml,.yml,.txt,.conf,.json" style="display:none" onchange="handleContributeFileSelect(this)">
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label data-i18n="sub.default_protocol">纯文本默认协议</label>
+          <select id="contribute-default-protocol" style="padding:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--fg);font-family:var(--mono);font-size:12px;outline:none">
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+          <div class="form-help" data-i18n="sub.default_protocol_help">仅当订阅内容为纯 IP:PORT 时生效</div>
         </div>
       </div>
     </div>
@@ -695,6 +711,8 @@ const i18n = {
     'sub.file_formats': '支持 Clash YAML / V2ray 订阅 / 纯文本',
     'sub.refresh_min': '刷新间隔 (分钟)',
     'sub.refresh_min_help': '仅 URL 模式有效，上传文件不自动刷新',
+    'sub.default_protocol': '纯文本默认协议',
+    'sub.default_protocol_help': '仅当订阅内容为纯 IP:PORT 时生效',
     'sub.cancel': '取消',
     'sub.submit': '添加',
     // 贡献订阅弹窗
@@ -1414,8 +1432,9 @@ async function addSubscription() {
   const name = document.getElementById('sub-name').value || t('sub.add_title');
   const url = document.getElementById('sub-url').value;
   const refreshMin = parseInt(document.getElementById('sub-refresh').value) || 60;
+  const defaultProtocol = document.getElementById('sub-default-protocol').value;
 
-  const data = { name, refresh_min: refreshMin };
+  const data = { name, refresh_min: refreshMin, default_protocol: defaultProtocol };
 
   if (subTab === 'url') {
     if (!url) { alert(t('msg.sub_url_required')); return; }
@@ -1525,7 +1544,8 @@ function closeContributeModal() {
 
 async function submitContribution() {
   const name = document.getElementById('contribute-name').value || t('contribute.title');
-  const data = { name };
+  const defaultProtocol = document.getElementById('contribute-default-protocol').value;
+  const data = { name, default_protocol: defaultProtocol };
 
   if (contributeTab === 'url') {
     const url = document.getElementById('contribute-url').value;

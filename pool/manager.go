@@ -142,7 +142,7 @@ func (m *Manager) NeedsFetchQuick(status *PoolStatus) bool {
 func (m *Manager) TryAddProxy(p storage.Proxy) (bool, string) {
 	// 订阅代理直接入池，不受 slot 限制
 	if p.Source == "custom" {
-		if err := m.storage.AddProxyWithSource(p.Address, p.Protocol, "custom"); err != nil {
+		if err := m.storage.AddProxyWithSource(p.Address, p.Protocol, "custom", "active"); err != nil {
 			return false, "db_error"
 		}
 		m.storage.UpdateExitInfo(p.Address, p.ExitIP, p.ExitLocation, p.Latency)

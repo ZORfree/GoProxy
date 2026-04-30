@@ -224,7 +224,7 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 	}
 
 	// 解析节点
-	nodes, err := Parse(data, sub.Format)
+	nodes, err := Parse(data, sub.Format, sub.DefaultProtocol)
 	if err != nil {
 		return fmt.Errorf("解析订阅内容失败: %w", err)
 	}
@@ -260,11 +260,12 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 	for _, node := range directNodes {
 		addr := node.DirectAddress()
 		proto := node.DirectProtocol()
-		m.storage.AddProxyWithSource(addr, proto, "custom", subID)
+		// 初始状态设为 'disabled'，等待 validateCustomProxies 验证后启用
+		m.storage.AddProxyWithSource(addr, proto, "custom", "disabled", subID)
 		allProxies = append(allProxies, storage.Proxy{Address: addr, Protocol: proto, Source: "custom"})
 	}
 	if len(directNodes) > 0 {
-		log.Printf("[custom] 📥 %d 个 HTTP/SOCKS5 节点直接入池", len(directNodes))
+		log.Printf("[custom] 📥 %d 个 HTTP/SOCKS5 节点入池 (待验证)", len(directNodes))
 	}
 
 	// 处理需要 sing-box 转换的节点
@@ -295,11 +296,12 @@ func (m *Manager) RefreshSubscription(subID int64) error {
 				key := node.NodeKey()
 				if port, ok := portMap[key]; ok {
 					addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-					m.storage.AddProxyWithSource(addr, "socks5", "custom", subID)
+					// 初始状态设为 'disabled'，等待验证后启用
+					m.storage.AddProxyWithSource(addr, "socks5", "custom", "disabled", subID)
 					allProxies = append(allProxies, storage.Proxy{Address: addr, Protocol: "socks5", Source: "custom"})
 				}
 			}
-			log.Printf("[custom] 📥 %d 个加密节点通过 sing-box 转换入池", len(tunnelNodes))
+			log.Printf("[custom] 📥 %d 个加密节点通过 sing-box 转换入池 (待验证)", len(tunnelNodes))
 		}
 	}
 

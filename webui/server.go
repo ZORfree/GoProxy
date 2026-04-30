@@ -570,9 +570,10 @@ func (s *Server) apiSubscriptionContribute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		URL         string `json:"url"`
-		FileContent string `json:"file_content"`
+		Name            string `json:"name"`
+		URL             string `json:"url"`
+		FileContent     string `json:"file_content"`
+		DefaultProtocol string `json:"default_protocol"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request", http.StatusBadRequest)
@@ -621,10 +622,10 @@ func (s *Server) apiSubscriptionContribute(w http.ResponseWriter, r *http.Reques
 	var id int64
 	var err error
 	if req.URL != "" {
-		id, err = s.storage.AddContributedSubscription(req.Name, req.URL, refreshMin)
+		id, err = s.storage.AddContributedSubscription(req.Name, req.URL, refreshMin, req.DefaultProtocol)
 	} else {
 		// 文件上传的贡献，用 AddSubscription + contributed 标记
-		id, err = s.storage.AddSubscription(req.Name, "", filePath, "auto", refreshMin)
+		id, err = s.storage.AddSubscription(req.Name, "", filePath, "auto", refreshMin, req.DefaultProtocol)
 		if err == nil {
 			// 标记为贡献
 			s.storage.GetDB().Exec(`UPDATE subscriptions SET contributed = 1 WHERE id = ?`, id)
@@ -658,10 +659,11 @@ func (s *Server) apiSubscriptionAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		URL         string `json:"url"`
-		FileContent string `json:"file_content"` // 上传的文件内容（Base64 编码）
-		RefreshMin  int    `json:"refresh_min"`
+		Name            string `json:"name"`
+		URL             string `json:"url"`
+		FileContent     string `json:"file_content"` // 上传的文件内容（Base64 编码）
+		RefreshMin      int    `json:"refresh_min"`
+		DefaultProtocol string `json:"default_protocol"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request", http.StatusBadRequest)
@@ -709,7 +711,7 @@ func (s *Server) apiSubscriptionAdd(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[webui] 订阅验证通过: %s (%d 个节点)", req.Name, nodeCount)
 	}
 
-	id, err := s.storage.AddSubscription(req.Name, req.URL, filePath, "auto", req.RefreshMin)
+	id, err := s.storage.AddSubscription(req.Name, req.URL, filePath, "auto", req.RefreshMin, req.DefaultProtocol)
 	if err != nil {
 		jsonError(w, "add subscription error: "+err.Error(), http.StatusInternalServerError)
 		return

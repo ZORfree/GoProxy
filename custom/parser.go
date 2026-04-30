@@ -47,15 +47,21 @@ func (n *ParsedNode) DirectProtocol() string {
 }
 
 // Parse 解析订阅内容（全自动检测格式）
-func Parse(data []byte, format string) ([]ParsedNode, error) {
+// defaultProtocol: 纯文本格式下无协议前缀时的默认协议（"http" 或 "socks5"），留空则默认 "http"
+func Parse(data []byte, format string, defaultProtocol ...string) ([]ParsedNode, error) {
+	proto := "http"
+	if len(defaultProtocol) > 0 && defaultProtocol[0] != "" {
+		proto = defaultProtocol[0]
+	}
 	// 无论用户选择什么格式，都走自动检测
-	return parseAutoDetect(data)
+	return parseAutoDetect(data, proto)
 }
 
 // parseAutoDetect 自动检测订阅格式并解析
-func parseAutoDetect(data []byte) ([]ParsedNode, error) {
+// defaultProtocol: 纯文本格式下无协议前缀时的默认协议
+func parseAutoDetect(data []byte, defaultProtocol string) ([]ParsedNode, error) {
 	content := strings.TrimSpace(string(data))
-	log.Printf("[custom] 自动检测格式: 内容长度=%d", len(content))
+	log.Printf("[custom] 自动检测格式: 内容长度=%d, 默认协议=%s", len(content), defaultProtocol)
 
 	// 1. 尝试 Clash YAML
 	if looksLikeYAML(content) {
@@ -74,7 +80,7 @@ func parseAutoDetect(data []byte) ([]ParsedNode, error) {
 	}
 
 	// 3. 尝试纯文本 (IP:PORT 或 protocol://IP:PORT)
-	nodes, err := parsePlain(data)
+	nodes, err := parsePlain(data, defaultProtocol)
 	if err == nil && len(nodes) > 0 {
 		log.Println("[custom] 检测到纯文本格式")
 		return nodes, nil
@@ -95,7 +101,7 @@ func parseAutoDetect(data []byte) ([]ParsedNode, error) {
 				return parseProxyLinks(decodedStr)
 			}
 			// 如果解码后是纯文本
-			nodes, err := parsePlain(decoded)
+			nodes, err := parsePlain(decoded, defaultProtocol)
 			if err == nil && len(nodes) > 0 {
 				return nodes, nil
 			}
@@ -354,7 +360,11 @@ func parseBase64(data []byte) ([]ParsedNode, error) {
 }
 
 // parsePlain 解析纯文本格式（每行一个 IP:PORT）
-func parsePlain(data []byte) ([]ParsedNode, error) {
+// defaultProtocol: 无协议前缀时的默认协议（"http" 或 "socks5"）
+func parsePlain(data []byte, defaultProtocol string) ([]ParsedNode, error) {
+	if defaultProtocol == "" {
+		defaultProtocol = "http"
+	}
 	lines := strings.Split(string(data), "\n")
 	var nodes []ParsedNode
 
@@ -364,10 +374,10 @@ func parsePlain(data []byte) ([]ParsedNode, error) {
 			continue
 		}
 
-		protocol := "http"
+		protocol := defaultProtocol // 使用用户指定的默认协议
 		addr := line
 
-		// 解析协议前缀
+		// 解析协议前缀（如果有前缀则覆盖默认值）
 		if strings.HasPrefix(line, "socks5://") {
 			protocol = "socks5"
 			addr = strings.TrimPrefix(line, "socks5://")
@@ -400,7 +410,7 @@ func parsePlain(data []byte) ([]ParsedNode, error) {
 		})
 	}
 
-	log.Printf("[custom] 纯文本解析完成，共 %d 个节点", len(nodes))
+	log.Printf("[custom] 纯文本解析完成，共 %d 个节点（默认协议: %s）", len(nodes), defaultProtocol)
 	return nodes, nil
 }
 
